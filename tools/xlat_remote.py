@@ -222,6 +222,7 @@ def apply_run_settings(remote, args):
         ("interval_ms", args.interval_ms),
         ("level", args.level),
         ("output", args.output),
+        ("release_holdoff_ms", args.release_holdoff_ms),
     ]
     for key, value in settings:
         if value is not None:
@@ -363,6 +364,8 @@ def build_parser():
     run.add_argument("--interval-ms", type=int)
     run.add_argument("--level", choices=("high", "low"))
     run.add_argument("--output", type=int, choices=(6, 11))
+    run.add_argument("--release-holdoff-ms", type=int, choices=(0, 20, 50, 100, 200),
+                     help="1.5.1 and later: ignore trigger edges this long after a USB release (0 = off)")
     run.add_argument("--out")
     run.add_argument("--timeout", type=float)
 

@@ -137,12 +137,13 @@ static void remote_settings_line(const char *command)
         case XLAT_MODE_KEYBOARD: mode = "key"; break;
         default: mode = "click"; break;
     }
-    remote_writef("@ok %s edge=%s bias=%s mode=%s debounce_ms=%lu interval_ms=%lu level=%s output=%u",
+    remote_writef("@ok %s edge=%s bias=%s mode=%s debounce_ms=%lu interval_ms=%lu level=%s output=%u release_holdoff_ms=%lu",
                   command, edge, bias, mode,
                   (unsigned long)(xlat_gpio_irq_holdoff_us_get() / 1000U),
                   (unsigned long)xlat_auto_trigger_interval_ms_get(),
                   xlat_auto_trigger_level_is_high() ? "high" : "low",
-                  xlat_auto_trigger_output_get());
+                  xlat_auto_trigger_output_get(),
+                  (unsigned long)(xlat_release_holdoff_us_get() / 1000U));
 }
 
 static void remote_status(void)
@@ -287,6 +288,15 @@ static void remote_set(char *key, char *value, char *extra)
     } else if (strcmp(key, "output") == 0) {
         setting = GFX_REMOTE_OUTPUT;
         valid = parse_uint32(value, &number) && (number == 6U || number == 11U);
+    } else if (strcmp(key, "release_holdoff_ms") == 0) {
+        // The GUI's Release Holdoff choices; 0 = Off. Set here directly: the GUI's dropdown keeps its own text.
+        valid = parse_uint32(value, &number) &&
+                (number == 0U || number == 20U || number == 50U || number == 100U || number == 200U);
+        if (valid) {
+            xlat_release_holdoff_us_set(number * 1000U);
+            remote_settings_line("set");
+            return;
+        }
     } else {
         valid = false;
     }
