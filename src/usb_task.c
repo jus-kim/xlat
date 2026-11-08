@@ -41,6 +41,7 @@ void hcd_port_power_set(uint8_t rhport, bool on);
 #include "tusb_config.h"
 
 #include "gfx_main.h"
+#include "remote.h"
 
 extern void hid_app_init(void);
 
@@ -255,6 +256,70 @@ static char product_string[64];
 static char serial_string[64];
 static char vidpid_string[32];  // Format: "VID:XXXX PID:XXXX"
 
+static usb_host_endpoint_info_t remote_endpoints[USB_HOST_REMOTE_ENDPOINTS_MAX] XLAT_REMOTE_STATE;
+static uint8_t remote_endpoint_count XLAT_REMOTE_STATE;
+static uint8_t remote_device_address XLAT_REMOTE_STATE;
+static bool remote_device_ready XLAT_REMOTE_STATE;
+
+// TinyUSB's *_sync control calls busy-wait with no timeout, and tuh_mount_cb runs them at this
+// task's high priority. If one never completes, every lower task starves (screen and serial too)
+// until someone resets the board. Only while mounting, a hang past this limit does that same reset.
+#define USB_MOUNT_WATCHDOG_MS 3000U
+static volatile uint32_t mount_deadline_tick XLAT_REMOTE_STATE; // 0 = not armed
+
+// Called from the 1 kHz tick interrupt
+void usb_host_mount_watchdog_tick(void)
+{
+    uint32_t deadline = mount_deadline_tick;
+    if (deadline != 0U && (int32_t)(HAL_GetTick() - deadline) >= 0) {
+        NVIC_SystemReset();
+    }
+}
+
+bool tuh_enum_descriptor_configuration_cb(uint8_t daddr, uint8_t cfg_index,
+                                          const tusb_desc_configuration_t *desc_config)
+{
+    (void)daddr;
+    (void)cfg_index;
+    remote_endpoint_count = 0;
+
+    uint16_t total = tu_le16toh(desc_config->wTotalLength);
+    const uint8_t *descriptor = (const uint8_t *)desc_config;
+    uint16_t offset = 0;
+    bool hid_interface = false;
+    uint8_t interface_number = 0;
+    uint8_t interface_protocol = 0;
+
+    while (offset + 2U <= total) {
+        uint8_t length = descriptor[offset];
+        uint8_t type = descriptor[offset + 1U];
+        if (length == 0 || (uint32_t)offset + length > total) {
+            break;
+        }
+
+        if (type == TUSB_DESC_INTERFACE && length >= sizeof(tusb_desc_interface_t)) {
+            const tusb_desc_interface_t *interface = (const tusb_desc_interface_t *)(descriptor + offset);
+            hid_interface = interface->bInterfaceClass == TUSB_CLASS_HID;
+            interface_number = interface->bInterfaceNumber;
+            interface_protocol = interface->bInterfaceProtocol;
+        } else if (type == TUSB_DESC_ENDPOINT && hid_interface &&
+                   length >= sizeof(tusb_desc_endpoint_t) && remote_endpoint_count < USB_HOST_REMOTE_ENDPOINTS_MAX) {
+            const tusb_desc_endpoint_t *endpoint = (const tusb_desc_endpoint_t *)(descriptor + offset);
+            if ((endpoint->bEndpointAddress & TUSB_DIR_IN_MASK) &&
+                endpoint->bmAttributes.xfer == TUSB_XFER_INTERRUPT) {
+                usb_host_endpoint_info_t *capture = &remote_endpoints[remote_endpoint_count++];
+                capture->interface_number = interface_number;
+                capture->interface_protocol = interface_protocol;
+                capture->endpoint_address = endpoint->bEndpointAddress;
+                capture->max_packet_size = tu_edpt_packet_size(endpoint);
+                capture->interval = endpoint->bInterval;
+            }
+        }
+        offset = (uint16_t)(offset + length);
+    }
+    return true;
+}
+
 // Helper function to convert UTF-16LE to UTF-8
 static void utf16le_to_utf8(const uint16_t* utf16, size_t utf16_len, char* utf8, size_t utf8_len) {
     size_t utf8_pos = 0;
@@ -315,6 +380,8 @@ static void update_string_descriptors(uint8_t daddr, tusb_desc_device_t *desc_de
 
 // Update the mount callback to get string descriptors
 void tuh_mount_cb(uint8_t daddr) {
+    mount_deadline_tick = (HAL_GetTick() + USB_MOUNT_WATCHDOG_MS) | 1U;
+
     // Get device descriptor first
     tusb_desc_device_t desc_device;
 
@@ -332,6 +399,9 @@ void tuh_mount_cb(uint8_t daddr) {
         // Send a message to the gfx thread, to refresh the device info
         gfx_event_send(GFX_EVENT_DEVICE_CONNECTED, 0);
     }
+    remote_device_address = daddr;
+    remote_device_ready = true;
+    mount_deadline_tick = 0;
 }
 
 // XXX FIXME: doesn't seem to be called
@@ -339,6 +409,7 @@ void tuh_umount_cb(uint8_t dev_addr) {
   // application tear-down
   printf("[%5lu] A device with address %d is unmounted\n", (unsigned long) xTaskGetTickCount(), dev_addr);
   xlat_clear_device_info();
+  remote_device_ready = false;
 }
 
 
@@ -358,4 +429,46 @@ const char* usb_host_get_serial_string(void) {
 const char * usb_host_get_vidpid_string(void)
 {
     return vidpid_string;
+}
+
+bool usb_host_device_ready(void)
+{
+    return remote_device_ready;
+}
+
+void usb_host_device_ready_clear(void)
+{
+    remote_device_ready = false;
+}
+
+uint8_t usb_host_get_device_address(void)
+{
+    return remote_device_address;
+}
+
+const char *usb_host_get_speed_string(void)
+{
+    if (!remote_device_ready) {
+        return "none";
+    }
+    switch (tuh_speed_get(remote_device_address)) {
+        case TUSB_SPEED_LOW: return "low";
+        case TUSB_SPEED_FULL: return "full";
+        case TUSB_SPEED_HIGH: return "high";
+        default: return "none";
+    }
+}
+
+uint8_t usb_host_get_endpoint_count(void)
+{
+    return remote_endpoint_count;
+}
+
+bool usb_host_get_endpoint(uint8_t index, usb_host_endpoint_info_t *endpoint)
+{
+    if (index >= remote_endpoint_count) {
+        return false;
+    }
+    *endpoint = remote_endpoints[index];
+    return true;
 }

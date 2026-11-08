@@ -19,6 +19,7 @@
 #include "main.h"
 #include "xlat.h"
 #include "hardware_config.h"
+#include "usb_task.h"
 
 CRC_HandleTypeDef hcrc;
 DMA2D_HandleTypeDef hdma2d;
@@ -673,6 +674,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if (htim->Instance == TIM6) {
         HAL_IncTick();
+        usb_host_mount_watchdog_tick();
     }
 }
 

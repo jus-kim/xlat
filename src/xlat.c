@@ -29,6 +29,7 @@
 #include "stm32f7xx_hal_tim.h"
 #include "hardware_config.h"
 #include "stdio_glue.h"
+#include "remote.h"
 #include "class/hid/hid.h"
 
 // LUFA HID Parser
@@ -46,6 +47,11 @@ static int32_t  last_latency_us[LATENCY_TYPE_MAX];
 static int64_t  average_latency_us_sum[LATENCY_TYPE_MAX]; // sum of all measurements
 static uint64_t average_latency_us_sum_sq[LATENCY_TYPE_MAX]; // sum of squares, for variance
 static uint32_t average_latency_us_count[LATENCY_TYPE_MAX];
+
+static uint32_t xlat_samples[XLAT_SAMPLES_MAX] XLAT_REMOTE_SAMPLES;
+static uint32_t xlat_samples_count XLAT_REMOTE_STATE;
+static uint32_t xlat_samples_min XLAT_REMOTE_STATE;
+static uint32_t xlat_samples_max XLAT_REMOTE_STATE;
 
 static volatile uint_fast8_t gpio_irq_producer = 0;
 static volatile uint_fast8_t gpio_irq_consumer = 0;
@@ -171,7 +177,7 @@ static void hidreport_check_item(HID_ReportItem_t *item)
     uint16_t* bits = NULL;
 
     // Print the item (for debugging)
-    // hidreport_print_item(item);
+    hidreport_print_item(item); // enabled in the build this replaces (see README)
 
     // Usage Page 0x0007: Keyboard/Keypad
     if (item->Attributes.Usage.Page == 0x0007) {
@@ -563,6 +569,19 @@ void xlat_latency_measurement_add(int32_t latency_us, enum latency_type type)
     average_latency_us_sum_sq[type] += (uint64_t)((int64_t)latency_us * latency_us);
     average_latency_us_count[type]++;
 
+    if (type == LATENCY_GPIO_TO_USB) {
+        if (xlat_samples_count < XLAT_SAMPLES_MAX) {
+            xlat_samples[xlat_samples_count] = latency_us;
+        }
+        xlat_samples_count++;
+        if (xlat_samples_count == 1 || latency_us < xlat_samples_min) {
+            xlat_samples_min = latency_us;
+        }
+        if (xlat_samples_count == 1 || latency_us > xlat_samples_max) {
+            xlat_samples_max = latency_us;
+        }
+    }
+
 //    printf(">>> GPIO->USB latency: %5lu us, ", last_gpio_to_usb_latency_us);
 //    printf("average latency: %5lu us\n", (uint32_t)(average_latency_us_sum / average_latency_us_count));
 }
@@ -580,6 +599,42 @@ void xlat_latency_reset(void)
         average_latency_us_sum_sq[i] = 0;
         average_latency_us_count[i] = 0;
     }
+    xlat_samples_count = 0;
+    xlat_samples_min = 0;
+    xlat_samples_max = 0;
+}
+
+void xlat_stats_snapshot(struct xlat_stats *stats)
+{
+    vTaskSuspendAll();
+    stats->count = xlat_latency_count_get(LATENCY_GPIO_TO_USB);
+    stats->last = xlat_last_latency_us_get(LATENCY_GPIO_TO_USB);
+    stats->sum = average_latency_us_sum[LATENCY_GPIO_TO_USB];
+    stats->minimum = xlat_samples_min;
+    stats->maximum = xlat_samples_max;
+    if (stats->count) {
+        stats->average = xlat_latency_average_get(LATENCY_GPIO_TO_USB);
+        stats->standard_deviation = xlat_latency_standard_deviation_get(LATENCY_GPIO_TO_USB);
+    } else {
+        stats->average = 0;
+        stats->standard_deviation = 0;
+    }
+    xTaskResumeAll();
+}
+
+uint32_t xlat_sample_get(uint32_t index)
+{
+    return index < xlat_sample_count_get() ? xlat_samples[index] : 0;
+}
+
+uint32_t xlat_sample_count_get(void)
+{
+    return xlat_samples_count < XLAT_SAMPLES_MAX ? xlat_samples_count : XLAT_SAMPLES_MAX;
+}
+
+uint32_t xlat_sample_capacity_get(void)
+{
+    return XLAT_SAMPLES_MAX;
 }
 
 static void xlat_timer_callback(TimerHandle_t xTimer)

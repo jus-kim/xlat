@@ -181,6 +181,7 @@ add_executable(${PROJECT_NAME}
         ${FREERTOS_Sources}
         ${RTT_Sources}
         ${TINYUSB_Sources}
+        src/remote.c
         )
 
 tinyusb_target_add(${PROJECT_NAME})

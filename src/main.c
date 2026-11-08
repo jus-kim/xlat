@@ -21,6 +21,8 @@
 #include "xlat.h"
 #include "gfx_main.h"
 #include "usb_task.h"
+#include "remote.h"
+#include "stdio_glue.h"
 
 osThreadId xlatTaskHandle;
 osThreadId lvglTaskHandle;
@@ -47,11 +49,13 @@ SemaphoreHandle_t lvgl_mutex;
   */
 int main(void)
 {
+    remote_ram_init();
     hw_init();
     hw_debug_init();
     gfx_init();
 
     lvgl_mutex = xSemaphoreCreateMutex();
+    vcp_mutex_init();
 
     hidevt_pool = osPoolCreate(osPool(hidevt_pool)); // create memory pool
     gfxevt_pool = osPoolCreate(osPool(gfxevt_pool)); // create memory pool
@@ -65,6 +69,8 @@ int main(void)
     lvglTaskHandle = osThreadCreate(osThread(lvglTask), NULL);
     osThreadDef(usbHostTask, usb_host_task, osPriorityHigh, 0, 2048 / 4);
     usbHostTaskHandle = osThreadCreate(osThread(usbHostTask), NULL);
+    osThreadDef(remoteTask, remote_task, osPriorityIdle, 0, 4096 / 4);
+    osThreadCreate(osThread(remoteTask), NULL);
 
     /* Start scheduler */
     osKernelStart();

@@ -18,6 +18,7 @@
 #include <main.h>
 #include <stm32f7xx_hal_gpio.h>
 #include <xlat.h>
+#include <usb_task.h>
 
 #include "tusb.h"
 #include "tusb_config.h"
@@ -76,6 +77,7 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance) {
     printf("\033[0m");
   }
   xlat_clear_device_info();
+  usb_host_device_ready_clear();
 }
 
 

@@ -37,6 +37,16 @@ struct gfx_event {
     int32_t value;
 };
 
+typedef enum gfx_remote_setting {
+    GFX_REMOTE_EDGE,
+    GFX_REMOTE_BIAS,
+    GFX_REMOTE_MODE,
+    GFX_REMOTE_DEBOUNCE,
+    GFX_REMOTE_INTERVAL,
+    GFX_REMOTE_LEVEL,
+    GFX_REMOTE_OUTPUT,
+} gfx_remote_setting_t;
+
 void gfx_init(void);
 void gfx_task(void const * argument);
 void gfx_device_label_set(const char * manufacturer, const char * productname, const char *vidpid);
@@ -46,5 +56,10 @@ void gfx_mode_label_set(void);
 void gfx_labels_update(void);
 void gfx_event_send(gfx_event_t type, int32_t value);
 void gfx_xlat_gui(void);
+bool gfx_remote_trigger_start(uint32_t n);
+void gfx_remote_trigger_stop(void);
+void gfx_remote_clear(void);
+void gfx_remote_setting_apply(gfx_remote_setting_t setting, uint32_t value);
+void gfx_remote_trigger_state(bool *timer_active, int32_t *remaining, int32_t *requested_out, int32_t *fired);
 
 #endif //XLAT_F7_FW_GFX_H

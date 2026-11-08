@@ -162,6 +162,19 @@ SECTIONS
     __bss_end__ = _ebss;
   } >RAM
 
+  .xlat_remote (NOLOAD) :
+  {
+    . = ALIGN(32);
+    __xlat_remote_start__ = .;
+    *(.xlat_remote.samples)
+    . = ALIGN(32);
+    __xlat_remote_state_start__ = .;
+    *(.xlat_remote.state)
+    . = ALIGN(32);
+    __xlat_remote_state_end__ = .;
+    __xlat_remote_end__ = .;
+  } >RAM
+
   /* User_heap_stack section, used to check that there is enough RAM left */
   ._user_heap_stack :
   {

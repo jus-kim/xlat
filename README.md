@@ -148,3 +148,20 @@ The libraries used are licensed under their respective licenses. See `LICENSES` 
 
 ## Conclusion
 The XLAT Mouse Latency Measurement Tool provides an accurate method for measuring mouse latency, aiding in achieving optimal performance for a competitive edge.
+
+## Serial remote control
+
+The USART1 virtual COM port runs at 1,000,000 baud (8N1) and accepts one ASCII command per line. Protocol messages begin with `@`; replies end with `@ok` or `@err`, while completed automatic runs produce an `@event done` line. Commands include `ping`, `status`, `clear`, `reset`, `start`, `stop`, `dump`, `get`, `set`, and `usb`. Existing semicolon-separated measurement lines remain available as a legacy stream.
+
+Install pyserial and use the included client with an explicit port:
+
+```shell
+python -m pip install pyserial
+python tools/xlat_remote.py --port COM4 ping
+python tools/xlat_remote.py --port COM4 run -n 1000 --out results.json
+python tools/xlat_remote.py --port COM4 listen --seconds 10
+```
+
+This firmware is based on v1.5.1 (c9c48f1) and also carries two edits from the earlier build it replaces: `CFG_TUH_ENUMERATION_BUFSIZE` 640 (needed for report descriptors over 512 bytes) and the HID item dump in `hidreport_check_item`. `reset` does what the REBOOT button does. If USB enumeration hangs in `tuh_mount_cb` for 3 s, the firmware performs that same reset by itself; `reset` and `run --reset` report any extra boots. Settings are kept in RAM and return to defaults on every reset.
+
+The client prints JSON to standard output. During `run` it sends no serial traffic between `start` and the firmware's completion event, then validates the buffered sample dump against the firmware statistics and any legacy CSV lines it received.

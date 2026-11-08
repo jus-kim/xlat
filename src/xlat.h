@@ -24,6 +24,17 @@
 
 #define AUTO_TRIGGER_PRESSED_PERIOD_MS (30)
 #define REPORT_LEN 64
+#define XLAT_SAMPLES_MAX 16384U
+
+struct xlat_stats {
+    uint32_t count;
+    uint32_t last;
+    uint32_t average;
+    uint32_t standard_deviation;
+    uint64_t sum;
+    uint32_t minimum;
+    uint32_t maximum;
+};
 
 /* Pseudo interface protocol: event carries a late GPIO edge (GPIO edge seen AFTER the
  * matching USB report), not a HID report. timestamp = USB report, gpio_timestamp = GPIO edge. */
@@ -67,6 +78,10 @@ uint32_t xlat_latency_standard_deviation_get(enum latency_type type);
 void xlat_latency_reset(void);
 void xlat_latency_measurement_add(int32_t latency_us, enum latency_type type);
 void xlat_print_measurement(void);
+void xlat_stats_snapshot(struct xlat_stats *stats);
+uint32_t xlat_sample_get(uint32_t index);
+uint32_t xlat_sample_count_get(void);
+uint32_t xlat_sample_capacity_get(void);
 
 void xlat_gpio_irq_holdoff_us_set(uint32_t us);
 uint32_t xlat_gpio_irq_holdoff_us_get(void);

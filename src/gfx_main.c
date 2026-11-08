@@ -30,6 +30,8 @@
 #include "xlat.h"
 #include "xlat_config.h"
 #include "gfx_settings.h"
+#include "hardware_config.h"
+#include "remote.h"
 
 #define Y_CHART_SIZE_X 410
 #define Y_CHART_SIZE_Y 130
@@ -57,8 +59,12 @@ static size_t chart_point_count = 0;
 static lv_coord_t chart_y_range = 0;
 static lv_coord_t chart_y_min = 0;   // <= 0, extended when negative latencies are measured
 
-static lv_timer_t * trigger_timer = NULL;
+static lv_timer_t * volatile trigger_timer = NULL;
 static lv_timer_t * trigger_timer_turn_off = NULL;
+// Keeps the input section name of the former function-local `count`, so that RAM layout is unchanged
+static volatile int32_t auto_trigger_count __attribute__((section(".bss.count.1")));
+static volatile int32_t requested XLAT_REMOTE_STATE;
+static volatile int32_t auto_trigger_fired XLAT_REMOTE_STATE;
 
 static void chart_reset(void);
 
@@ -144,6 +150,7 @@ static void auto_trigger_clear_timer(void)
         lv_timer_del(trigger_timer);
         trigger_timer = NULL;
     }
+    auto_trigger_count = 0;
 }
 
 // Busy-wait a random 0..999 us before each GPIO edge toggle so the edge
@@ -168,10 +175,11 @@ void auto_trigger_turn_off_callback(lv_timer_t * timer)
 void auto_trigger_callback(lv_timer_t * timer)
 {
     char label[20];
-    size_t * count = timer->user_data;
+    volatile int32_t * count = timer->user_data;
 
     auto_trigger_desync_sof();
     xlat_auto_trigger_action();
+    auto_trigger_fired = auto_trigger_fired + 1;
     trigger_timer_turn_off = lv_timer_create(auto_trigger_turn_off_callback, AUTO_TRIGGER_PRESSED_PERIOD_MS, NULL);
     lv_timer_set_repeat_count(trigger_timer_turn_off, 1);
 
@@ -188,25 +196,29 @@ void auto_trigger_callback(lv_timer_t * timer)
     }
 }
 
+static void auto_trigger_start(int32_t n)
+{
+    printf("AutoTrigger activated\n");
+    auto_trigger_count = n;
+    requested = n;
+    auto_trigger_fired = 0;
+    srand(xlat_counter_1mhz_get());
+    trigger_timer = lv_timer_create(auto_trigger_callback, xlat_auto_trigger_interval_ms_get(),
+                                    (void *)&auto_trigger_count);
+}
+
 static void btn_trigger_event_cb(lv_event_t * e)
 {
-    static int32_t count;
-
     lv_event_code_t code = lv_event_get_code(e);
 
     if (code == LV_EVENT_CLICKED) {
-        if (count) {
+        if (auto_trigger_count) {
             // Already running
-            count = 0;
+            auto_trigger_count = 0;
             auto_trigger_clear_timer();
         } else {
             // Trigger a new series of measurements
-            printf("AutoTrigger activated\n");
-            count = 1000;
-            // seed the random number generator
-            srand(xlat_counter_1mhz_get());
-            // start the timer
-            trigger_timer = lv_timer_create(auto_trigger_callback, xlat_auto_trigger_interval_ms_get(), &count);
+            auto_trigger_start(1000);
             //lv_timer_set_repeat_count(timer, count);
         }
     }
@@ -550,19 +562,26 @@ void gfx_task(void const * argument)
                 break;
 
             case GFX_EVENT_DEVICE_CONNECTED:
+                // The remote task also calls into LVGL, so these need the mutex too
+                xSemaphoreTake(lvgl_mutex, portMAX_DELAY);
                 gfx_labels_update();
+                xSemaphoreGive(lvgl_mutex);
                 break;
 
             case GFX_EVENT_MODE_CHANGED:
+                xSemaphoreTake(lvgl_mutex, portMAX_DELAY);
                 gfx_mode_label_set();
+                xSemaphoreGive(lvgl_mutex);
                 break;
 
             case GFX_EVENT_DEVICE_DISCONNECTED:
+                xSemaphoreTake(lvgl_mutex, portMAX_DELAY);
                 auto_trigger_clear_timer(); // stop auto-trigger in case it's running
                 gfx_data_locations_label_set();
                 gfx_device_label_set("", "No USB device found", "");
                 gfx_mode_label_set();
                 latency_measurements_clear();
+                xSemaphoreGive(lvgl_mutex);
                 break;
             }
 
@@ -595,4 +614,69 @@ void gfx_event_send(gfx_event_t type, int32_t value)
     evt->type = type;
     evt->value = value;
     osMessagePut(msgQGfxTask, (uint32_t)evt, 0U);
+}
+
+bool gfx_remote_trigger_start(uint32_t n)
+{
+    bool started = false;
+    xSemaphoreTake(lvgl_mutex, portMAX_DELAY);
+    if (trigger_timer == NULL) {
+        auto_trigger_start((int32_t)n);
+        started = true;
+    }
+    xSemaphoreGive(lvgl_mutex);
+    return started;
+}
+
+void gfx_remote_trigger_stop(void)
+{
+    xSemaphoreTake(lvgl_mutex, portMAX_DELAY);
+    auto_trigger_count = 0;
+    auto_trigger_clear_timer();
+    xSemaphoreGive(lvgl_mutex);
+}
+
+void gfx_remote_clear(void)
+{
+    xSemaphoreTake(lvgl_mutex, portMAX_DELAY);
+    latency_measurements_clear();
+    xSemaphoreGive(lvgl_mutex);
+}
+
+void gfx_remote_setting_apply(gfx_remote_setting_t setting, uint32_t value)
+{
+    xSemaphoreTake(lvgl_mutex, portMAX_DELAY);
+    switch (setting) {
+        case GFX_REMOTE_EDGE:
+            hw_config_input_trigger_set_edge(value != 0);
+            break;
+        case GFX_REMOTE_BIAS:
+            hw_config_input_bias((input_bias_t)value);
+            break;
+        case GFX_REMOTE_MODE:
+            xlat_mode_set((xlat_mode_t)value);
+            gfx_event_send(GFX_EVENT_MODE_CHANGED, 0);
+            break;
+        case GFX_REMOTE_DEBOUNCE:
+            xlat_gpio_irq_holdoff_us_set(value * 1000U);
+            break;
+        case GFX_REMOTE_INTERVAL:
+            xlat_auto_trigger_interval_ms_set(value);
+            break;
+        case GFX_REMOTE_LEVEL:
+            xlat_auto_trigger_level_set(value != 0);
+            break;
+        case GFX_REMOTE_OUTPUT:
+            xlat_auto_trigger_output_set((uint8_t)value);
+            break;
+    }
+    xSemaphoreGive(lvgl_mutex);
+}
+
+void gfx_remote_trigger_state(bool *timer_active, int32_t *remaining, int32_t *requested_out, int32_t *fired)
+{
+    *timer_active = trigger_timer != NULL;
+    *remaining = auto_trigger_count;
+    *requested_out = requested;
+    *fired = auto_trigger_fired;
 }

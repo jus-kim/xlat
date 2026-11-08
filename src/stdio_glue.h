@@ -19,8 +19,10 @@
 #ifndef STDIO_GLUE_H
 #define STDIO_GLUE_H
 
+void vcp_mutex_init(void);
 int vcp_write(char *ptr, int len);
 int vcp_writestr(char *ptr);
+int vcp_write_line_remote(const char *ptr, int len);
 int vcp_read(char *ptr, int len);
 
 #endif //STDIO_GLUE_H

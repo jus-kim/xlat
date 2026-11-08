@@ -17,6 +17,14 @@
 #include <stdio.h>
 #include <string.h>
 #include "main.h"
+#include "remote.h"
+
+static SemaphoreHandle_t vcp_mutex XLAT_REMOTE_STATE;
+
+void vcp_mutex_init(void)
+{
+    vcp_mutex = xSemaphoreCreateMutex();
+}
 
 // RTT will override these
 __weak int _write(int file, char *ptr, int len)
@@ -36,7 +44,9 @@ __weak int _read(int file, char *ptr, int len)
 
 int vcp_write(char *ptr, int len)
 {
+    xSemaphoreTake(vcp_mutex, portMAX_DELAY);
     HAL_UART_Transmit(&huart1, (uint8_t *) ptr, len, 100);
+    xSemaphoreGive(vcp_mutex);
     return len;
 }
 
@@ -44,8 +54,18 @@ int vcp_write(char *ptr, int len)
 int vcp_writestr(char *ptr)
 {
     size_t len = strlen(ptr);
+    xSemaphoreTake(vcp_mutex, portMAX_DELAY);
     HAL_UART_Transmit(&huart1, (uint8_t *) ptr, len, 100);
+    xSemaphoreGive(vcp_mutex);
     return (int)len;
+}
+
+int vcp_write_line_remote(const char *ptr, int len)
+{
+    xSemaphoreTake(vcp_mutex, portMAX_DELAY);
+    HAL_StatusTypeDef status = HAL_UART_Transmit(&huart1, (uint8_t *)ptr, len, 1000);
+    xSemaphoreGive(vcp_mutex);
+    return status == HAL_OK ? len : -1;
 }
 
 // RTT will override these
