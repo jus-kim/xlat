@@ -144,6 +144,19 @@ add_definitions(
 )
 
 add_subdirectory(libs/lvgl)
+set(TUSB_PING_PATCH ${CMAKE_SOURCE_DIR}/patches/tinyusb-hcd-dwc2-ping.patch)
+execute_process(COMMAND git apply --reverse --check ${TUSB_PING_PATCH}
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/libs/tinyusb RESULT_VARIABLE TUSB_PING_APPLIED ERROR_QUIET)
+if(NOT TUSB_PING_APPLIED EQUAL 0)
+    execute_process(COMMAND git apply ${TUSB_PING_PATCH}
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/libs/tinyusb RESULT_VARIABLE TUSB_PING_RESULT)
+    if(NOT TUSB_PING_RESULT EQUAL 0)
+        message(FATAL_ERROR "Could not apply ${TUSB_PING_PATCH}, libs/tinyusb may hold an older version of it")
+    endif()
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${TUSB_PING_PATCH}
+        ${CMAKE_SOURCE_DIR}/libs/tinyusb/src/portable/synopsys/dwc2/hcd_dwc2.c)
+
 add_subdirectory(libs/tinyusb/src)
 
 set(TINYUSB_Sources
