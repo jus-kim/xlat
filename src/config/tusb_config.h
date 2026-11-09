@@ -121,7 +121,7 @@
 //--------------------------------------------------------------------
 
 // Size of buffer to hold descriptors and other data used for enumeration
-#define CFG_TUH_ENUMERATION_BUFSIZE 512
+#define CFG_TUH_ENUMERATION_BUFSIZE (512 + 128)
 
 #define CFG_TUH_HUB                 1 // number of supported hubs
 #define CFG_TUH_CDC                 0 // CDC ACM
